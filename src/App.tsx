@@ -42,14 +42,16 @@ type Tab = 'today' | 'habits' | 'stats';
 type TimeRange = '14D' | '1M' | '3M' | '6M' | '1Y' | '2Y';
 
 const COLORS = [
-  'bg-[#5A5A40]', // Natural Accent (Theme Default)
-  'bg-[#4A7C59]', // Sage
-  'bg-[#D4A373]', // Sand
-  'bg-[#8E7CC3]', // Lavender
-  'bg-[#A5A58D]', // Olive
-  'bg-[#6B705C]', // Forest
-  'bg-[#CB997E]', // Terracotta
-  'bg-[#B7B7A4]'  // Linen
+  'bg-[#5A5A40]', // 經典綠褐 (預設)
+  'bg-[#2D6A4F]', // 森林深綠
+  'bg-[#457B9D]', // 靜謐湖藍
+  'bg-[#BC6C25]', // 橡木焦糖
+  'bg-[#9B2226]', // 復古深紅
+  'bg-[#7678ED]', // 薰衣草紫
+  'bg-[#E07A5F]', // 陶土橘
+  'bg-[#3D405B]', // 深岩青
+  'bg-[#81B29A]', // 鼠尾草綠
+  'bg-[#D4A373]'  // 沙漠黃
 ];
 
 const INITIAL_HABITS: Habit[] = [
@@ -83,7 +85,8 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<Tab>('today');
   const [selectedDate, setSelectedDate] = useState(startOfToday());
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
   const [selectedHabitIdForStats, setSelectedHabitIdForStats] = useState<string | 'all'>('all');
   const [selectedTimeRange, setSelectedTimeRange] = useState<TimeRange>('14D');
   const [newHabit, setNewHabit] = useState({ 
@@ -116,21 +119,55 @@ export default function App() {
     }));
   };
 
-  const addHabit = () => {
+  const handleOpenModal = (habit?: Habit) => {
+    if (habit) {
+      setEditingHabitId(habit.id);
+      setNewHabit({
+        title: habit.title,
+        description: habit.description || '',
+        color: habit.color,
+        goalPerWeek: habit.goalPerWeek
+      });
+    } else {
+      setEditingHabitId(null);
+      setNewHabit({ title: '', description: '', color: COLORS[0], goalPerWeek: 7 });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleSaveHabit = () => {
     if (!newHabit.title.trim()) return;
-    const habit: Habit = {
-      id: crypto.randomUUID(),
-      title: newHabit.title,
-      description: newHabit.description,
-      color: newHabit.color,
-      icon: 'Zap',
-      createdAt: format(new Date(), 'yyyy-MM-dd'),
-      goalPerWeek: newHabit.goalPerWeek,
-      completedDates: []
-    };
-    setHabits(prev => [...prev, habit]);
-    setNewHabit({ title: '', description: '', color: COLORS[0], goalPerWeek: 7 });
-    setIsAddModalOpen(false);
+
+    if (editingHabitId) {
+      // 編輯模式
+      setHabits(prev => prev.map(h => {
+        if (h.id === editingHabitId) {
+          return {
+            ...h,
+            title: newHabit.title,
+            description: newHabit.description,
+            color: newHabit.color,
+            goalPerWeek: newHabit.goalPerWeek
+          };
+        }
+        return h;
+      }));
+    } else {
+      // 新增模式
+      const habit: Habit = {
+        id: crypto.randomUUID(),
+        title: newHabit.title,
+        description: newHabit.description,
+        color: newHabit.color,
+        icon: 'Zap',
+        createdAt: format(new Date(), 'yyyy-MM-dd'),
+        goalPerWeek: newHabit.goalPerWeek,
+        completedDates: []
+      };
+      setHabits(prev => [...prev, habit]);
+    }
+    
+    setIsModalOpen(false);
   };
 
   const deleteHabit = (id: string) => {
@@ -251,7 +288,7 @@ export default function App() {
             </p>
           </div>
           <button 
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={() => handleOpenModal()}
             className="p-4 bg-natural-accent text-white rounded-2xl shadow-sm hover:opacity-90 active:scale-95 transition-all"
           >
             <Plus size={24} />
@@ -324,12 +361,20 @@ export default function App() {
                     <p className="text-[10px] uppercase font-bold tracking-widest text-natural-text-muted">建立於 {habit.createdAt}</p>
                   </div>
                 </div>
-                <button 
-                  onClick={() => deleteHabit(habit.id)}
-                  className="p-3 text-natural-text-muted hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                >
-                  <Trash2 size={20} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={() => handleOpenModal(habit)}
+                    className="p-3 text-natural-text-muted hover:text-natural-accent hover:bg-natural-muted rounded-xl transition-all"
+                  >
+                    <Settings size={20} />
+                  </button>
+                  <button 
+                    onClick={() => deleteHabit(habit.id)}
+                    className="p-3 text-natural-text-muted hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                  >
+                    <Trash2 size={20} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -628,15 +673,15 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Add Modal */}
+      {/* Modal */}
       <AnimatePresence>
-        {isAddModalOpen && (
+        {isModalOpen && (
           <>
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsAddModalOpen(false)}
+              onClick={() => setIsModalOpen(false)}
               className="fixed inset-0 bg-[#2D2D2D]/30 backdrop-blur-sm z-[100]"
             />
             <motion.div 
@@ -645,7 +690,9 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.9, y: 100 }}
               className="fixed bottom-6 left-6 right-6 z-[101] bg-natural-bg rounded-[40px] p-10 border border-natural-border shadow-2xl max-w-lg mx-auto overflow-hidden"
             >
-              <h2 className="text-3xl font-serif font-bold mb-8 text-natural-text">新習慣</h2>
+              <h2 className="text-3xl font-serif font-bold mb-8 text-natural-text">
+                {editingHabitId ? '編輯習慣' : '新習慣'}
+              </h2>
               <div className="space-y-8">
                 <div>
                   <label className="text-[10px] font-bold text-natural-text-muted uppercase tracking-[0.2em] block mb-3">習慣名稱</label>
@@ -704,16 +751,16 @@ export default function App() {
                 </div>
                 <div className="flex gap-4 pt-4">
                   <button 
-                    onClick={() => setIsAddModalOpen(false)}
+                    onClick={() => setIsModalOpen(false)}
                     className="flex-1 py-4 text-natural-text-muted font-bold rounded-2xl hover:bg-natural-muted transition-all"
                   >
                     取消
                   </button>
                   <button 
-                    onClick={addHabit}
+                    onClick={handleSaveHabit}
                     className="flex-[2] py-4 bg-natural-accent text-white font-bold rounded-2xl shadow-sm hover:opacity-90 active:scale-95 transition-all"
                   >
-                    開始建立
+                    {editingHabitId ? '儲存修改' : '開始建立'}
                   </button>
                 </div>
               </div>
