@@ -96,12 +96,60 @@ export default function App() {
     goalPerWeek: 7 
   });
 
+  // 紀錄手動加入當日的低頻習慣 (Record<dateStr, habitId[]>)
+  const [manualInclusions, setManualInclusions] = useState<Record<string, string[]>>(() => {
+    const saved = localStorage.getItem('habitflow_manual_inclusions');
+    return saved ? JSON.parse(saved) : {};
+  });
+
   // Save to localStorage
   useEffect(() => {
     localStorage.setItem('habitflow_habits', JSON.stringify(habits));
   }, [habits]);
 
+  useEffect(() => {
+    localStorage.setItem('habitflow_manual_inclusions', JSON.stringify(manualInclusions));
+  }, [manualInclusions]);
+
   const selectedDateStr = format(selectedDate, 'yyyy-MM-dd');
+
+  // --- Calculations ---
+  
+  // 今日生效的習慣：頻率 >= 6 的自動列入，或者該日有手動列入的
+  const visibleHabits = useMemo(() => {
+    return habits.filter(habit => {
+      if (habit.goalPerWeek >= 6) return true;
+      return manualInclusions[selectedDateStr]?.includes(habit.id);
+    });
+  }, [habits, selectedDateStr, manualInclusions]);
+
+  // 可選的習慣：頻率 < 6 且今日尚未列入的
+  const optionalHabits = useMemo(() => {
+    return habits.filter(habit => 
+      habit.goalPerWeek < 6 && 
+      !manualInclusions[selectedDateStr]?.includes(habit.id)
+    );
+  }, [habits, selectedDateStr, manualInclusions]);
+
+  const stats = useMemo(() => {
+    const activeHabits = visibleHabits;
+    const totalHabits = activeHabits.length;
+    const completedToday = activeHabits.filter(h => h.completedDates.includes(selectedDateStr)).length;
+    const completionRate = totalHabits > 0 ? Math.round((completedToday / totalHabits) * 100) : 0;
+    
+    const streaks = habits.map(h => {
+      let streak = 0;
+      let d = startOfToday();
+      while (h.completedDates.includes(format(d, 'yyyy-MM-dd'))) {
+        streak++;
+        d = subDays(d, 1);
+      }
+      return streak;
+    });
+    const maxStreak = streaks.length > 0 ? Math.max(...streaks) : 0;
+
+    return { totalHabits, completedToday, completionRate, maxStreak };
+  }, [habits, selectedDateStr, visibleHabits]);
 
   // --- Actions ---
   const toggleHabit = (id: string, dateStr: string) => {
@@ -117,6 +165,21 @@ export default function App() {
       }
       return habit;
     }));
+  };
+
+  const addInclusion = (habitId: string) => {
+    setManualInclusions(prev => {
+      const current = prev[selectedDateStr] || [];
+      if (current.includes(habitId)) return prev;
+      return { ...prev, [selectedDateStr]: [...current, habitId] };
+    });
+  };
+
+  const removeInclusion = (habitId: string) => {
+    setManualInclusions(prev => {
+      const current = prev[selectedDateStr] || [];
+      return { ...prev, [selectedDateStr]: current.filter(id => id !== habitId) };
+    });
   };
 
   const handleOpenModal = (habit?: Habit) => {
@@ -176,26 +239,16 @@ export default function App() {
     }
   };
 
-  // --- Calculations ---
-  const stats = useMemo(() => {
-    const totalHabits = habits.length;
-    const completedToday = habits.filter(h => h.completedDates.includes(selectedDateStr)).length;
-    const completionRate = totalHabits > 0 ? Math.round((completedToday / totalHabits) * 100) : 0;
-    
-    // Simple current streak calculation for all habits combined (for visual demo)
-    const streaks = habits.map(h => {
-      let streak = 0;
-      let d = startOfToday();
-      while (h.completedDates.includes(format(d, 'yyyy-MM-dd'))) {
-        streak++;
-        d = subDays(d, 1);
-      }
-      return streak;
-    });
-    const maxStreak = streaks.length > 0 ? Math.max(...streaks) : 0;
-
-    return { totalHabits, completedToday, completionRate, maxStreak };
-  }, [habits, selectedDateStr]);
+  const streakData = habits.reduce((acc, h) => {
+    let streak = 0;
+    let d = startOfToday();
+    while (h.completedDates.includes(format(d, 'yyyy-MM-dd'))) {
+      streak++;
+      d = subDays(d, 1);
+    }
+    acc[h.id] = streak;
+    return acc;
+  }, {} as Record<string, number>);
 
   // --- Sub-components ---
   const DailyWeekView = () => {
@@ -334,14 +387,94 @@ export default function App() {
         {activeTab === 'today' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <DailyWeekView />
+            
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-natural-text-muted uppercase tracking-widest pl-1">今日計畫</h2>
+              {optionalHabits.length > 0 && (
+                 <div className="flex gap-2 overflow-x-auto no-scrollbar py-1">
+                    {optionalHabits.map(h => (
+                      <button 
+                         key={h.id}
+                         onClick={() => addInclusion(h.id)}
+                         className="flex items-center gap-1.5 px-3 py-1 bg-white border border-natural-border rounded-full text-[10px] font-bold text-natural-accent hover:bg-natural-muted transition-all whitespace-nowrap"
+                      >
+                         <Plus size={10} />
+                         {h.title}
+                      </button>
+                    ))}
+                 </div>
+              )}
+            </div>
+
             <div className="space-y-4">
-              {habits.length === 0 ? (
+              {visibleHabits.length === 0 ? (
                 <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200">
-                  <LayoutGrid size={48} className="mx-auto text-gray-200 mb-4" />
-                  <p className="text-gray-400 font-medium">還沒有習慣？點擊右上角新增一個吧！</p>
+                  <LayoutGrid size={48} className="mx-auto text-gray-100 mb-4" />
+                  <p className="text-gray-400 font-medium px-10">
+                    {habits.length === 0 
+                      ? "點擊右上角新增習慣吧！" 
+                      : "今天沒有要執行的固定習慣。"}
+                  </p>
+                  {optionalHabits.length > 0 && (
+                    <p className="text-xs text-natural-text-muted mt-2">可以從上方列表加入今日想完成的習慣</p>
+                  )}
                 </div>
               ) : (
-                habits.map(habit => <HabitCard key={habit.id} habit={habit} />)
+                visibleHabits.map(habit => {
+                  const isCompleted = habit.completedDates.includes(selectedDateStr);
+                  const isOptional = habit.goalPerWeek < 6;
+
+                  return (
+                    <motion.div 
+                      key={`${habit.id}-${selectedDateStr}`}
+                      layout
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="group relative bg-white p-4 rounded-[24px] border border-natural-border shadow-sm hover:shadow-md transition-all duration-300"
+                    >
+                      <div className="flex items-center gap-4">
+                        <button 
+                          onClick={() => toggleHabit(habit.id, selectedDateStr)}
+                          className={cn(
+                            "w-12 h-12 rounded-full transition-all duration-300 transform active:scale-90 flex items-center justify-center border-2",
+                            isCompleted 
+                              ? cn(habit.color, "border-transparent text-white shadow-sm") 
+                              : "bg-natural-bg text-natural-text-muted border-natural-border"
+                          )}
+                        >
+                          {isCompleted ? <CheckCircle2 size={24} /> : <div className="w-5 h-5 rounded-full border-2 border-natural-border" />}
+                        </button>
+                        
+                        <div className="flex-1">
+                          <h3 className={cn("font-bold text-natural-text", isCompleted && "text-natural-text-muted line-through opacity-60")}>
+                            {habit.title}
+                          </h3>
+                          {habit.description && (
+                            <p className="text-xs text-natural-text-muted mt-0.5 line-clamp-1">{habit.description}</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {isOptional && (
+                            <button 
+                              onClick={() => removeInclusion(habit.id)}
+                              className="p-2 text-natural-text-muted hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                              title="從今日計畫移除"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                          <div className="flex items-center gap-1.5 text-natural-accent font-bold bg-natural-muted px-2 py-1 rounded-lg">
+                            <Flame size={12} fill="currentColor" />
+                            <span className="text-[10px]">
+                              {streakData[habit.id] || 0}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })
               )}
             </div>
           </motion.div>
