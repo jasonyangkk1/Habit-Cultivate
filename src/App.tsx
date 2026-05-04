@@ -27,6 +27,11 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { cn } from './lib/utils';
 
 // --- Types ---
+interface HabitProgress {
+  count: number;
+  duration: number; // in minutes
+}
+
 interface Habit {
   id: string;
   title: string;
@@ -34,8 +39,11 @@ interface Habit {
   color: string;
   icon: string;
   createdAt: string;
-  goalPerWeek: number; // 每週目標次數
-  completedDates: string[]; // Array of YYYY-MM-DD
+  goalPerWeek: number; // 每週目標天數
+  dailyTargetCount: number; // 每天要幾次
+  dailyTargetDuration: number; // 每天要幾分鐘
+  completedDates: string[]; // 達成目標的日期 YYYY-MM-DD
+  logs: Record<string, HabitProgress>; // 具體紀錄
 }
 
 type Tab = 'today' | 'habits' | 'stats';
@@ -63,7 +71,10 @@ const INITIAL_HABITS: Habit[] = [
     icon: 'Zap',
     createdAt: format(subDays(new Date(), 7), 'yyyy-MM-dd'),
     goalPerWeek: 7,
-    completedDates: [format(subDays(new Date(), 1), 'yyyy-MM-dd'), format(subDays(new Date(), 2), 'yyyy-MM-dd')]
+    dailyTargetCount: 8,
+    dailyTargetDuration: 0,
+    completedDates: [],
+    logs: {}
   },
   {
     id: '2',
@@ -73,7 +84,10 @@ const INITIAL_HABITS: Habit[] = [
     icon: 'Zap',
     createdAt: format(subDays(new Date(), 5), 'yyyy-MM-dd'),
     goalPerWeek: 7,
-    completedDates: [format(subDays(new Date(), 1), 'yyyy-MM-dd')]
+    dailyTargetCount: 1,
+    dailyTargetDuration: 10,
+    completedDates: [],
+    logs: {}
   }
 ];
 
@@ -93,7 +107,9 @@ export default function App() {
     title: '', 
     description: '', 
     color: COLORS[0],
-    goalPerWeek: 7 
+    goalPerWeek: 7,
+    dailyTargetCount: 1,
+    dailyTargetDuration: 0
   });
 
   // 紀錄手動加入當日的低頻習慣 (Record<dateStr, habitId[]>)
@@ -152,19 +168,60 @@ export default function App() {
   }, [habits, selectedDateStr, visibleHabits]);
 
   // --- Actions ---
-  const toggleHabit = (id: string, dateStr: string) => {
+  const updateProgress = (id: string, dateStr: string, updates: Partial<HabitProgress>) => {
     setHabits(prev => prev.map(habit => {
       if (habit.id === id) {
-        const isCompleted = habit.completedDates.includes(dateStr);
+        const currentLogs = habit.logs || {};
+        const currentProgress = currentLogs[dateStr] || { count: 0, duration: 0 };
+        const newProgress = { ...currentProgress, ...updates };
+        
+        // 確保數值不小於 0
+        newProgress.count = Math.max(0, newProgress.count);
+        newProgress.duration = Math.max(0, newProgress.duration);
+
+        // 判斷是否達成目標
+        const isTargetMet = newProgress.count >= (habit.dailyTargetCount || 1) && 
+                          newProgress.duration >= (habit.dailyTargetDuration || 0);
+
+        const currentCompletedDates = habit.completedDates || [];
+        const isAlreadyCompleted = currentCompletedDates.includes(dateStr);
+        
+        let newCompletedDates = currentCompletedDates;
+        if (isTargetMet && !isAlreadyCompleted) {
+          newCompletedDates = [...currentCompletedDates, dateStr];
+        } else if (!isTargetMet && isAlreadyCompleted) {
+          newCompletedDates = currentCompletedDates.filter(d => d !== dateStr);
+        }
+
         return {
           ...habit,
-          completedDates: isCompleted 
-            ? habit.completedDates.filter(d => d !== dateStr)
-            : [...habit.completedDates, dateStr]
+          completedDates: newCompletedDates,
+          logs: {
+            ...currentLogs,
+            [dateStr]: newProgress
+          }
         };
       }
       return habit;
     }));
+  };
+
+  const toggleHabit = (id: string, dateStr: string) => {
+    const habit = habits.find(h => h.id === id);
+    if (!habit) return;
+
+    const isCompleted = habit.completedDates.includes(dateStr);
+    
+    if (isCompleted) {
+      // 如果已完成，取消完成並歸零 (或者保留數據，這裡選擇歸零比較直覺)
+      updateProgress(id, dateStr, { count: 0, duration: 0 });
+    } else {
+      // 如果未完成，直接設定為達標數值
+      updateProgress(id, dateStr, { 
+        count: habit.dailyTargetCount || 1, 
+        duration: habit.dailyTargetDuration || 0 
+      });
+    }
   };
 
   const addInclusion = (habitId: string) => {
@@ -189,11 +246,20 @@ export default function App() {
         title: habit.title,
         description: habit.description || '',
         color: habit.color,
-        goalPerWeek: habit.goalPerWeek
+        goalPerWeek: habit.goalPerWeek,
+        dailyTargetCount: habit.dailyTargetCount || 1,
+        dailyTargetDuration: habit.dailyTargetDuration || 0
       });
     } else {
       setEditingHabitId(null);
-      setNewHabit({ title: '', description: '', color: COLORS[0], goalPerWeek: 7 });
+      setNewHabit({ 
+        title: '', 
+        description: '', 
+        color: COLORS[0], 
+        goalPerWeek: 7,
+        dailyTargetCount: 1,
+        dailyTargetDuration: 0
+      });
     }
     setIsModalOpen(true);
   };
@@ -210,7 +276,9 @@ export default function App() {
             title: newHabit.title,
             description: newHabit.description,
             color: newHabit.color,
-            goalPerWeek: newHabit.goalPerWeek
+            goalPerWeek: newHabit.goalPerWeek,
+            dailyTargetCount: newHabit.dailyTargetCount,
+            dailyTargetDuration: newHabit.dailyTargetDuration
           };
         }
         return h;
@@ -225,7 +293,10 @@ export default function App() {
         icon: 'Zap',
         createdAt: format(new Date(), 'yyyy-MM-dd'),
         goalPerWeek: newHabit.goalPerWeek,
-        completedDates: []
+        dailyTargetCount: newHabit.dailyTargetCount,
+        dailyTargetDuration: newHabit.dailyTargetDuration,
+        completedDates: [],
+        logs: {}
       };
       setHabits(prev => [...prev, habit]);
     }
@@ -423,6 +494,9 @@ export default function App() {
                 visibleHabits.map(habit => {
                   const isCompleted = habit.completedDates.includes(selectedDateStr);
                   const isOptional = habit.goalPerWeek < 6;
+                  const progress = habit.logs?.[selectedDateStr] || { count: 0, duration: 0 };
+                  const targetCount = habit.dailyTargetCount || 1;
+                  const targetDuration = habit.dailyTargetDuration || 0;
 
                   return (
                     <motion.div 
@@ -430,13 +504,13 @@ export default function App() {
                       layout
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="group relative bg-white p-4 rounded-[24px] border border-natural-border shadow-sm hover:shadow-md transition-all duration-300"
+                      className="group relative bg-white p-5 rounded-[32px] border border-natural-border shadow-sm hover:shadow-md transition-all duration-300"
                     >
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-start gap-4">
                         <button 
                           onClick={() => toggleHabit(habit.id, selectedDateStr)}
                           className={cn(
-                            "w-12 h-12 rounded-full transition-all duration-300 transform active:scale-90 flex items-center justify-center border-2",
+                            "w-12 h-12 rounded-full mt-1 shrink-0 transition-all duration-300 transform active:scale-90 flex items-center justify-center border-2",
                             isCompleted 
                               ? cn(habit.color, "border-transparent text-white shadow-sm") 
                               : "bg-natural-bg text-natural-text-muted border-natural-border"
@@ -446,30 +520,91 @@ export default function App() {
                         </button>
                         
                         <div className="flex-1">
-                          <h3 className={cn("font-bold text-natural-text", isCompleted && "text-natural-text-muted line-through opacity-60")}>
-                            {habit.title}
-                          </h3>
-                          {habit.description && (
-                            <p className="text-xs text-natural-text-muted mt-0.5 line-clamp-1">{habit.description}</p>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {isOptional && (
-                            <button 
-                              onClick={() => removeInclusion(habit.id)}
-                              className="p-2 text-natural-text-muted hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                              title="從今日計畫移除"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
-                          <div className="flex items-center gap-1.5 text-natural-accent font-bold bg-natural-muted px-2 py-1 rounded-lg">
-                            <Flame size={12} fill="currentColor" />
-                            <span className="text-[10px]">
-                              {streakData[habit.id] || 0}
-                            </span>
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h3 className={cn("font-bold text-natural-text", isCompleted && "text-natural-text-muted line-through opacity-60")}>
+                                {habit.title}
+                              </h3>
+                              {habit.description && (
+                                <p className="text-xs text-natural-text-muted mt-0.5 line-clamp-1">{habit.description}</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 ml-4">
+                              {isOptional && (
+                                <button 
+                                  onClick={() => removeInclusion(habit.id)}
+                                  className="p-2 text-natural-text-muted hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                  title="從今日計畫移除"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                              <div className="flex items-center gap-1.5 text-natural-accent font-bold bg-natural-muted px-2 py-1 rounded-lg">
+                                <Flame size={12} fill="currentColor" />
+                                <span className="text-[10px]">
+                                  {streakData[habit.id] || 0}
+                                </span>
+                              </div>
+                            </div>
                           </div>
+
+                          {/* 互動區 */}
+                          <div className="mt-4 flex flex-wrap items-center gap-4">
+                            {/* 次數計數器 */}
+                            {targetCount > 1 && (
+                              <div className="flex items-center gap-3 bg-natural-muted px-3 py-1.5 rounded-2xl border border-natural-border/50">
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); updateProgress(habit.id, selectedDateStr, { count: progress.count - 1 }); }}
+                                  className="w-6 h-6 flex items-center justify-center text-natural-text-muted hover:text-natural-accent transition-colors"
+                                >
+                                  -
+                                </button>
+                                <div className="text-[10px] font-bold text-natural-text whitespace-nowrap min-w-[3rem] text-center">
+                                  {progress.count} / {targetCount} 次
+                                </div>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); updateProgress(habit.id, selectedDateStr, { count: progress.count + 1 }); }}
+                                  className="w-6 h-6 flex items-center justify-center text-natural-text-muted hover:text-natural-accent transition-colors"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
+
+                            {/* 時間紀錄 */}
+                            {targetDuration > 0 && (
+                              <div className="flex items-center gap-3 bg-natural-muted px-3 py-1.5 rounded-2xl border border-natural-border/50">
+                                <div className="text-[10px] font-bold text-natural-text/70 uppercase tracking-tighter">時間</div>
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="number"
+                                    value={progress.duration || ''}
+                                    placeholder="0"
+                                    onChange={(e) => updateProgress(habit.id, selectedDateStr, { duration: parseInt(e.target.value) || 0 })}
+                                    className="w-12 bg-white border border-natural-border rounded-lg px-2 py-0.5 text-[10px] font-bold text-center appearance-none focus:outline-none focus:ring-1 focus:ring-natural-accent"
+                                  />
+                                  <span className="text-[10px] font-bold text-natural-text-muted">/ {targetDuration} 分</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 進度條 */}
+                          {(targetCount > 1 || targetDuration > 0) && (
+                            <div className="mt-3 h-1 bg-natural-muted rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={false}
+                                animate={{ 
+                                  width: `${Math.min(
+                                    ((targetCount > 1 ? (progress.count / targetCount) : 1) * 
+                                     (targetDuration > 0 ? (progress.duration / targetDuration) : 1)) * 100, 
+                                    100
+                                  )}%` 
+                                }}
+                                className={cn("h-full transition-all duration-500", habit.color)}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
                     </motion.div>
@@ -491,7 +626,17 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="font-bold text-natural-text">{habit.title}</h3>
-                    <p className="text-[10px] uppercase font-bold tracking-widest text-natural-text-muted">建立於 {habit.createdAt}</p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <p className="text-[10px] uppercase font-bold tracking-widest text-natural-text-muted">建立於 {habit.createdAt}</p>
+                      <div className="flex items-center gap-2">
+                        {habit.dailyTargetCount > 1 && (
+                          <span className="text-[9px] bg-natural-muted text-natural-accent px-1.5 py-0.5 rounded font-bold">每日 {habit.dailyTargetCount} 次</span>
+                        )}
+                        {habit.dailyTargetDuration > 0 && (
+                          <span className="text-[9px] bg-natural-muted text-natural-accent px-1.5 py-0.5 rounded font-bold">每日 {habit.dailyTargetDuration} 分鐘</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -613,7 +758,16 @@ export default function App() {
 
                                 dataPoints.push({
                                     name: format(weekStart, 'MM/dd'),
-                                    completed: selectedHabitIdForStats === 'all' ? totalCompleted : totalCompleted > 0 ? 1 : 0
+                                    completed: selectedHabitIdForStats === 'all' ? totalCompleted : totalCompleted > 0 ? 1 : 0,
+                                    duration: interval.reduce((acc, day) => {
+                                        const dateStr = format(day, 'yyyy-MM-dd');
+                                        if (selectedHabitIdForStats === 'all') {
+                                            return acc + habits.reduce((hAcc, h) => hAcc + (h.logs?.[dateStr]?.duration || 0), 0);
+                                        } else {
+                                            const h = habits.find(habit => habit.id === selectedHabitIdForStats);
+                                            return acc + (h?.logs?.[dateStr]?.duration || 0);
+                                        }
+                                    }, 0)
                                 });
                             }
                         } else {
@@ -622,16 +776,20 @@ export default function App() {
                                 const dateStr = format(date, 'yyyy-MM-dd');
                                 
                                 let value = 0;
+                                let duration = 0;
                                 if (selectedHabitIdForStats === 'all') {
                                   value = habits.filter(h => h.completedDates.includes(dateStr)).length;
+                                  duration = habits.reduce((acc, h) => acc + (h.logs?.[dateStr]?.duration || 0), 0);
                                 } else {
                                   const habit = habits.find(h => h.id === selectedHabitIdForStats);
                                   value = habit?.completedDates.includes(dateStr) ? 1 : 0;
+                                  duration = habit?.logs?.[dateStr]?.duration || 0;
                                 }
         
                                 dataPoints.push({
                                   name: format(date, daysToCount > 31 ? 'MM/dd' : 'MM/dd'),
                                   completed: value,
+                                  duration: duration
                                 });
                             }
                         }
@@ -679,6 +837,120 @@ export default function App() {
                         } 
                         strokeWidth={selectedTimeRange === '1Y' ? 2 : 4} 
                         dot={selectedTimeRange === '1Y' ? false : { r: 3, strokeWidth: 0 }}
+                        activeDot={{ r: 5, strokeWidth: 0 }}
+                        animationDuration={1000}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+             </div>
+
+             {/* 時間投入趨勢 (Duration Chart) */}
+             <div className="bg-white p-8 rounded-[32px] border border-natural-border shadow-sm">
+                <h3 className="text-sm font-bold text-natural-accent mb-8 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <TrendingUp size={16} />
+                  時間投入趨勢 (分鐘)
+                </h3>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={(() => {
+                        let daysToCount = 14;
+                        if (selectedTimeRange === '1M') daysToCount = 30;
+                        if (selectedTimeRange === '3M') daysToCount = 90;
+                        if (selectedTimeRange === '6M') daysToCount = 180;
+                        if (selectedTimeRange === '1Y') daysToCount = 365;
+                        if (selectedTimeRange === '2Y') daysToCount = 730;
+
+                        const useWeekly = daysToCount > 100;
+                        const dataPoints = [];
+                        
+                        if (useWeekly) {
+                            const weeksToCount = Math.ceil(daysToCount / 7);
+                            for (let i = 0; i < weeksToCount; i++) {
+                                const weekStart = subWeeks(startOfISOWeek(startOfToday()), weeksToCount - 1 - i);
+                                const weekEnd = endOfISOWeek(weekStart);
+                                const interval = eachDayOfInterval({ start: weekStart, end: weekEnd });
+                                
+                                let totalDuration = 0;
+                                interval.forEach(day => {
+                                    const dateStr = format(day, 'yyyy-MM-dd');
+                                    if (selectedHabitIdForStats === 'all') {
+                                        totalDuration += habits.reduce((acc, h) => acc + (h.logs?.[dateStr]?.duration || 0), 0);
+                                    } else {
+                                        const h = habits.find(habit => habit.id === selectedHabitIdForStats);
+                                        totalDuration += (h?.logs?.[dateStr]?.duration || 0);
+                                    }
+                                });
+
+                                dataPoints.push({
+                                    name: format(weekStart, 'MM/dd'),
+                                    duration: totalDuration
+                                });
+                            }
+                        } else {
+                            for (let i = 0; i < daysToCount; i++) {
+                                const date = subDays(startOfToday(), daysToCount - 1 - i);
+                                const dateStr = format(date, 'yyyy-MM-dd');
+                                
+                                let duration = 0;
+                                if (selectedHabitIdForStats === 'all') {
+                                  duration = habits.reduce((acc, h) => acc + (h.logs?.[dateStr]?.duration || 0), 0);
+                                } else {
+                                  const habit = habits.find(h => h.id === selectedHabitIdForStats);
+                                  duration = habit?.logs?.[dateStr]?.duration || 0;
+                                }
+        
+                                dataPoints.push({
+                                  name: format(date, 'MM/dd'),
+                                  duration: duration,
+                                });
+                            }
+                        }
+                        return dataPoints;
+                      })()}
+                      margin={{ top: 5, right: 5, left: -20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E5DF" />
+                      <XAxis 
+                        dataKey="name" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 9, fill: '#8C8C84', fontWeight: 600 }}
+                        dy={10}
+                        minTickGap={20}
+                      />
+                      <YAxis 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 9, fill: '#8C8C84', fontWeight: 600 }}
+                        allowDecimals={false}
+                        label={{ value: '分鐘', angle: -90, position: 'insideLeft', offset: 10, fontSize: 9, fill: '#8C8C84' }}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: '#FDFCF8', 
+                          borderRadius: '12px', 
+                          border: '1px solid #E5E5DF',
+                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                          fontSize: '11px',
+                          fontWeight: '600'
+                        }}
+                        formatter={(value: any) => [`${value} 分鐘`, '投入時間']}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="duration" 
+                        stroke={selectedHabitIdForStats === 'all' 
+                          ? "#5A5A40" 
+                          : (() => {
+                              const c = habits.find(h => h.id === selectedHabitIdForStats)?.color;
+                              if (c?.includes('bg-[')) return c.match(/\[(.*?)\]/)?.[1] || "#5A5A40";
+                              return "#5A5A40";
+                            })()
+                        } 
+                        strokeWidth={selectedTimeRange === '1Y' || selectedTimeRange === '2Y' ? 2 : 4} 
+                        dot={selectedTimeRange === '1Y' || selectedTimeRange === '2Y' ? false : { r: 3, strokeWidth: 0 }}
                         activeDot={{ r: 5, strokeWidth: 0 }}
                         animationDuration={1000}
                       />
@@ -826,7 +1098,7 @@ export default function App() {
               <h2 className="text-3xl font-serif font-bold mb-8 text-natural-text">
                 {editingHabitId ? '編輯習慣' : '新習慣'}
               </h2>
-              <div className="space-y-8">
+              <div className="space-y-8 max-h-[70vh] overflow-y-auto no-scrollbar pr-2">
                 <div>
                   <label className="text-[10px] font-bold text-natural-text-muted uppercase tracking-[0.2em] block mb-3">習慣名稱</label>
                   <input 
@@ -846,6 +1118,38 @@ export default function App() {
                     className="w-full bg-white border border-natural-border rounded-2xl p-5 focus:ring-2 focus:ring-natural-accent transition-all font-medium text-natural-text placeholder:text-natural-text-muted/50 shadow-sm"
                   />
                 </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="text-[10px] font-bold text-natural-text-muted uppercase tracking-[0.2em] block mb-3">每日次數</label>
+                    <div className="flex items-center gap-4 bg-white border border-natural-border rounded-2xl px-4 py-3 shadow-sm">
+                      <button 
+                        onClick={() => setNewHabit(prev => ({ ...prev, dailyTargetCount: Math.max(1, prev.dailyTargetCount - 1) }))}
+                        className="w-10 h-10 rounded-xl hover:bg-natural-muted transition-colors font-bold text-xl"
+                      >
+                        -
+                      </button>
+                      <span className="flex-1 text-center font-bold text-natural-text">{newHabit.dailyTargetCount}</span>
+                      <button 
+                        onClick={() => setNewHabit(prev => ({ ...prev, dailyTargetCount: prev.dailyTargetCount + 1 }))}
+                        className="w-10 h-10 rounded-xl hover:bg-natural-muted transition-colors font-bold text-xl"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-natural-text-muted uppercase tracking-[0.2em] block mb-3">持續時間 (分)</label>
+                    <input 
+                      type="number"
+                      value={newHabit.dailyTargetDuration || ''}
+                      onChange={(e) => setNewHabit(prev => ({ ...prev, dailyTargetDuration: parseInt(e.target.value) || 0 }))}
+                      placeholder="0"
+                      className="w-full bg-white border border-natural-border rounded-2xl p-5 focus:ring-2 focus:ring-natural-accent transition-all font-bold text-center text-natural-text shadow-sm"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="text-[10px] font-bold text-natural-text-muted uppercase tracking-[0.2em] block mb-3">每週運作頻率</label>
                   <div className="flex justify-between bg-white border border-natural-border rounded-2xl p-2 shadow-sm">
